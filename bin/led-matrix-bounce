@@ -4,7 +4,7 @@
 # The logo bounces vertically up and down the 9x34 pixel display.
 # Frames are cached after first generation for instant startup.
 #
-# Self-contained port of omarchy-led-matrix-bounce for the steve.led-matrix
+# Self-contained port of omarchy-led-matrix-bounce for the godlewski.framework-led-matrix-helper
 # shell plugin — no omarchy-* dependencies.
 #
 # Usage:
@@ -17,7 +17,7 @@ if ! command -v inputmodule-control >/dev/null 2>&1; then
 fi
 
 device_args=("$@")
-CACHE_DIR="$HOME/.cache/steve.led-matrix/bounce-frames"
+CACHE_DIR="$HOME/.cache/godlewski.framework-led-matrix-helper/bounce-frames"
 
 # Generate frames if not cached
 if [[ ! -d "$CACHE_DIR" ]] || [[ -z "$(ls -A "$CACHE_DIR" 2>/dev/null)" ]]; then

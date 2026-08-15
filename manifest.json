@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "steve.led-matrix",
+  "id": "godlewski.framework-led-matrix-helper",
   "name": "LED Matrix",
   "version": "1.0.0",
   "author": "Steve Godlewski",

@@ -7,7 +7,7 @@ import "LedMatrixModel.js" as Model
 
 BarWidget {
   id: root
-  moduleName: "steve.led-matrix"
+  moduleName: "godlewski.framework-led-matrix-helper"
 
   readonly property string ctlPath: Qt.resolvedUrl("bin/led-matrix-ctl").toString().replace(/^file:\/\//, "")
   readonly property bool swapped: {
@@ -91,7 +91,7 @@ BarWidget {
 
   function toggleSwap() {
     // No --json: it silently drops a false value (first-party CLI quirk)
-    swapProc.command = ["omarchy", "bar", "set", "steve.led-matrix", "swapped", swapped ? "false" : "true"]
+    swapProc.command = ["omarchy", "bar", "set", "godlewski.framework-led-matrix-helper", "swapped", swapped ? "false" : "true"]
     if (!swapProc.running) swapProc.running = true
   }
 
@@ -103,7 +103,7 @@ BarWidget {
   }
 
   IpcHandler {
-    target: "steve.led-matrix"
+    target: "godlewski.framework-led-matrix-helper"
     function refresh(): void { root.broadcast("refresh") }
     function toggle(): void { root.popupOpen = !root.popupOpen }
     function sleep(): void { root.runAction(["sleep"]) }

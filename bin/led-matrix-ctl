@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Control Framework 16 LED Matrix input modules.
-# Self-contained helper for the steve.led-matrix shell plugin — no omarchy-* deps.
+# Self-contained helper for the godlewski.framework-led-matrix-helper shell plugin — no omarchy-* deps.
 #
 # Usage:
 #   led-matrix-ctl list
@@ -21,7 +21,7 @@
 
 set -u
 
-STATE_DIR="$HOME/.local/state/steve.led-matrix"
+STATE_DIR="$HOME/.local/state/godlewski.framework-led-matrix-helper"
 PID_FILE="$STATE_DIR/animation.pid"
 TYPE_FILE="$STATE_DIR/animation.type"
 BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
