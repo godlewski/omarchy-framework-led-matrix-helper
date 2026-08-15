@@ -1,0 +1,102 @@
+#!/bin/bash
+
+# Bouncing Omarchy logo animation for Framework 16 LED Matrix.
+# The logo bounces vertically up and down the 9x34 pixel display.
+# Frames are cached after first generation for instant startup.
+#
+# Self-contained port of omarchy-led-matrix-bounce for the steve.led-matrix
+# shell plugin — no omarchy-* dependencies.
+#
+# Usage:
+#   led-matrix-bounce [--serial-dev /dev/ttyACMx ...]
+
+set -u
+
+if ! command -v inputmodule-control >/dev/null 2>&1; then
+  exit 1
+fi
+
+device_args=("$@")
+CACHE_DIR="$HOME/.cache/steve.led-matrix/bounce-frames"
+
+# Generate frames if not cached
+if [[ ! -d "$CACHE_DIR" ]] || [[ -z "$(ls -A "$CACHE_DIR" 2>/dev/null)" ]]; then
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "led-matrix-bounce: python3 is required to generate frames" >&2
+    exit 1
+  fi
+  mkdir -p "$CACHE_DIR"
+  python3 -c '
+import struct, zlib, os, sys
+D = sys.argv[1]
+L = [
+    [1,1,1,1,1,1,1,1,1],
+    [1,0,0,0,1,0,0,0,1],
+    [1,0,1,1,1,0,1,1,1],
+    [1,0,1,0,0,0,1,0,1],
+    [1,1,1,0,0,0,1,0,1],
+    [1,0,1,0,0,0,1,0,1],
+    [1,0,1,1,1,1,1,0,1],
+    [1,0,0,0,1,0,0,0,1],
+    [1,1,1,1,1,0,1,1,1],
+]
+W, H, LH = 9, 34, 9
+def png(px):
+    def c(t, d):
+        x = t + d
+        return struct.pack(">I", len(d)) + x + struct.pack(">I", zlib.crc32(x) & 0xffffffff)
+    raw = b""
+    for r in px:
+        raw += b"\x00" + bytes(255 if v else 0 for v in r)
+    return b"\x89PNG\r\n\x1a\n" + c(b"IHDR", struct.pack(">IIBBBBB", W, H, 8, 0, 0, 0, 0)) + c(b"IDAT", zlib.compress(raw)) + c(b"IEND", b"")
+n = 0
+for y in list(range(H - LH + 1)) + list(range(H - LH - 1, 0, -1)):
+    f = [[0]*W for _ in range(H)]
+    for ly, row in enumerate(L):
+        for lx, val in enumerate(row):
+            if val:
+                f[y + ly][lx] = 1
+    open(os.path.join(D, f"f{n:04d}.png"), "wb").write(png(f))
+    n += 1
+' "$CACHE_DIR"
+fi
+
+# Discover devices for parallel frame sending
+devices=()
+if [[ ${#device_args[@]} -gt 0 ]]; then
+  for ((i = 0; i < ${#device_args[@]}; i++)); do
+    if [[ "${device_args[$i]}" == "--serial-dev" ]]; then
+      devices+=("${device_args[$((i + 1))]}")
+      ((i++))
+    fi
+  done
+else
+  while IFS= read -r dev; do
+    devices+=("$dev")
+  done < <(inputmodule-control --list 2>/dev/null | awk '
+    /^\/dev\/tty/ { dev=$1 }
+    /Product.*LED_Matrix/ { print dev }
+  ')
+fi
+
+if [[ ${#devices[@]} -eq 0 ]]; then
+  exit 1
+fi
+
+shopt -s nullglob
+frames=("$CACHE_DIR"/f*.png)
+if [[ ${#frames[@]} -eq 0 ]]; then
+  echo "led-matrix-bounce: no frames in $CACHE_DIR" >&2
+  exit 1
+fi
+
+# Play frames in a loop — send to all devices in parallel each frame
+while true; do
+  for frame in "${frames[@]}"; do
+    for dev in "${devices[@]}"; do
+      inputmodule-control --serial-dev "$dev" led-matrix --image-bw "$frame" 2>/dev/null &
+    done
+    wait
+    sleep 0.1
+  done
+done

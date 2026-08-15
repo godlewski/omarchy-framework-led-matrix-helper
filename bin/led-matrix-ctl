@@ -1,0 +1,263 @@
+#!/bin/bash
+
+# Control Framework 16 LED Matrix input modules.
+# Self-contained helper for the steve.led-matrix shell plugin — no omarchy-* deps.
+#
+# Usage:
+#   led-matrix-ctl list
+#   led-matrix-ctl [--device /dev/ttyACMx] <action> [args]
+#
+# Actions:
+#   brightness <0-100>   Set LED max brightness percentage
+#   pattern <name>       Display a firmware pattern
+#   text <string>        Display text (5 chars per panel; split across panels)
+#   percentage <0-100>   Display a percentage bar
+#   sleep | wake | off   Power state
+#   animate <type>       Host-side animation: breathing, blinking, clock, eq, bounce
+#   stop-animation       Stop the running host-side animation
+#   animation-status     Print the running animation type, or nothing if idle
+#   game <name>          Start a firmware game: snake, pong, tetris, game-of-life
+#   stop-game            Stop the running game
+
+set -u
+
+STATE_DIR="$HOME/.local/state/steve.led-matrix"
+PID_FILE="$STATE_DIR/animation.pid"
+TYPE_FILE="$STATE_DIR/animation.type"
+BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BOUNCE_BIN="$BIN_DIR/led-matrix-bounce"
+LOGO_IMG="$BIN_DIR/../assets/omarchy-logo-9x34.png"
+
+if ! command -v inputmodule-control >/dev/null 2>&1; then
+  exit 1
+fi
+
+list_devices() {
+  inputmodule-control --list 2>/dev/null | awk '
+    /^\/dev\/tty/ { dev=$1 }
+    /Product.*LED_Matrix/ { print dev }
+  '
+}
+
+SWAP=0
+device_args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --swap)   SWAP=1; shift ;;
+    --device) device_args=(--serial-dev "${2:?--device requires a device path}"); shift 2 ;;
+    *) break ;;
+  esac
+done
+
+# Panels enumerate in arbitrary order and share a serial number, so physical
+# left/right is unknowable from software — --swap reverses the effective order.
+devices() {
+  if [[ $SWAP -eq 1 ]]; then
+    list_devices | tac
+  else
+    list_devices
+  fi
+}
+
+if [[ "${1:-}" == "list" ]]; then
+  devices
+  exit 0
+fi
+
+pid_is_ours() {
+  [[ -r "/proc/$1/cmdline" ]] && grep -q "led-matrix" "/proc/$1/cmdline" 2>/dev/null
+}
+
+STREAMERS_KILLED=0
+
+# A frame-streamer killed mid-write can leave the firmware's command parser
+# misaligned in the byte stream — further commands then get garbled. A few
+# idempotent writes realign the stream. (--animate false: write-only, no
+# response bytes, and the plugin never enables firmware scroll.)
+flush_parsers() {
+  sleep 0.2
+  for _ in 1 2 3; do
+    run_on_targets --animate false
+  done
+}
+
+# Firmware semantics (inputmodule-rs): games run on-device and overwrite the
+# grid every tick until --stop-game; breathing/blinking are host loops that
+# only send brightness and therefore compose with any grid content; clock/eq/
+# bounce stream full frames and own the display.
+stop_display_owners() {
+  STREAMERS_KILLED=0
+  if [[ -f "$TYPE_FILE" ]]; then
+    case "$(cat "$TYPE_FILE" 2>/dev/null)" in
+      clock | eq | mic-eq | bounce) stop_animation ;;
+    esac
+  fi
+  run_on_targets --stop-game
+  [[ $STREAMERS_KILLED -eq 1 ]] && flush_parsers
+  return 0
+}
+
+# Run one led-matrix command on the --device target if given, else on every
+# discovered matrix in parallel.
+run_on_targets() {
+  if [[ ${#device_args[@]} -gt 0 ]]; then
+    inputmodule-control "${device_args[@]}" led-matrix "$@" 2>/dev/null
+    return
+  fi
+  local dev pids=()
+  while IFS= read -r dev; do
+    inputmodule-control --serial-dev "$dev" led-matrix "$@" 2>/dev/null &
+    pids+=("$!")
+  done < <(devices)
+  local pid
+  for pid in "${pids[@]}"; do
+    wait "$pid"
+  done
+}
+
+stop_animation() {
+  if [[ -f "$PID_FILE" ]]; then
+    local pid
+    for pid in $(cat "$PID_FILE" 2>/dev/null); do
+      # A stale PID file can point at a reused PID after a shell restart —
+      # only kill processes that are actually ours.
+      if pid_is_ours "$pid"; then
+        kill "$pid" 2>/dev/null
+        STREAMERS_KILLED=1
+        # Animators can block in a serial read for seconds — wait for real
+        # death (escalating to SIGKILL) so a follow-up command never fights
+        # a dying loop for the panel.
+        for _ in $(seq 20); do
+          kill -0 "$pid" 2>/dev/null || break
+          sleep 0.1
+        done
+        kill -9 "$pid" 2>/dev/null
+      fi
+    done
+    rm -f "$PID_FILE" "$TYPE_FILE"
+  fi
+  # Backstop for the bounce loop's in-flight frame senders
+  if [[ -n "${1:-}" || -f "$TYPE_FILE" ]]; then
+    pkill -f "$BOUNCE_BIN" 2>/dev/null || true
+  fi
+}
+
+start_animation() {
+  local anim_type="$1"
+  local flag
+  case "$anim_type" in
+    breathing) flag="--breathing" ;;
+    blinking)  flag="--blinking" ;;
+    clock)     flag="--clock" ;;
+    eq)        flag="--random-eq" ;;
+    mic-eq)    flag="--input-eq" ;;
+    bounce)    flag="bounce" ;;
+    *) return 1 ;;
+  esac
+
+  STREAMERS_KILLED=0
+  stop_animation
+  [[ $STREAMERS_KILLED -eq 1 ]] && flush_parsers
+  mkdir -p "$STATE_DIR"
+
+  # Wake targets, free the display from any firmware game, and ensure a
+  # visible brightness before animating
+  run_on_targets --sleeping false
+  run_on_targets --stop-game
+  run_on_targets --brightness 80
+
+  local pids=() dev
+  if [[ "$flag" == "bounce" ]]; then
+    # The bounce loop fans out to all panels itself
+    "$BOUNCE_BIN" "${device_args[@]}" &
+    pids+=($!)
+  elif [[ ${#device_args[@]} -gt 0 ]]; then
+    inputmodule-control "${device_args[@]}" led-matrix "$flag" 2>/dev/null &
+    pids+=($!)
+  else
+    # One host-side animator per panel
+    while IFS= read -r dev; do
+      inputmodule-control --serial-dev "$dev" led-matrix "$flag" 2>/dev/null &
+      pids+=("$!")
+    done < <(devices)
+  fi
+
+  if [[ ${#pids[@]} -eq 0 ]]; then
+    return 1
+  fi
+  echo "${pids[*]}" > "$PID_FILE"
+  echo "$anim_type" > "$TYPE_FILE"
+  disown -a 2>/dev/null || true
+}
+
+action="${1:-}"
+[[ $# -gt 0 ]] && shift
+
+case "$action" in
+  brightness)  run_on_targets --brightness "${1:?brightness 0-100 required}" ;;
+  pattern)
+    stop_display_owners
+    if [[ "${1:?pattern name required}" == "logo" ]]; then
+      run_on_targets --image-bw "$LOGO_IMG"
+    else
+      run_on_targets --pattern "$1"
+    fi
+    ;;
+  percentage)  stop_display_owners; run_on_targets --percentage "${1:?percentage 0-100 required}" ;;
+  sleep)       stop_animation; run_on_targets --sleeping true ;;
+  wake)        run_on_targets --sleeping false ;;
+  off)         stop_animation; run_on_targets --brightness 0 ;;
+
+  text)
+    stop_display_owners
+    local_msg="${1:-}"
+    msg="${local_msg^^}"
+    if [[ ${#device_args[@]} -gt 0 ]]; then
+      inputmodule-control "${device_args[@]}" led-matrix --string "${msg:0:5}" 2>/dev/null
+    else
+      # Split across panels in effective order, 5 chars each
+      i=0
+      while IFS= read -r dev; do
+        inputmodule-control --serial-dev "$dev" led-matrix --string "${msg:i*5:5}" 2>/dev/null &
+        i=$((i + 1))
+      done < <(devices)
+      wait
+    fi
+    ;;
+
+  animate)          start_animation "${1:?animation type required}" ;;
+  stop-animation)   stop_animation ;;
+
+  animation-status)
+    if [[ -f "$PID_FILE" && -f "$TYPE_FILE" ]]; then
+      alive=0
+      for pid in $(cat "$PID_FILE" 2>/dev/null); do
+        if kill -0 "$pid" 2>/dev/null && pid_is_ours "$pid"; then
+          alive=1
+          break
+        fi
+      done
+      if [[ $alive -eq 1 ]]; then
+        cat "$TYPE_FILE"
+      else
+        rm -f "$PID_FILE" "$TYPE_FILE"
+      fi
+    fi
+    ;;
+
+  game)
+    stop_animation
+    g="${1:?game name required}"
+    if [[ "$g" == "game-of-life" ]]; then
+      run_on_targets --start-game "$g" --game-param "${2:-blinker}"
+    else
+      run_on_targets --start-game "$g"
+    fi
+    ;;
+  stop-game) run_on_targets --stop-game ;;
+
+  *)
+    echo "unknown action: $action" >&2
+    exit 2
+    ;;
+esac

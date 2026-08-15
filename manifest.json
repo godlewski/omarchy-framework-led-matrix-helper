@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "steve.led-matrix",
+  "name": "LED Matrix",
+  "version": "1.0.0",
+  "author": "Steve Godlewski",
+  "description": "Control Framework 16 LED Matrix input modules from the bar",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "LedMatrix.qml"
+  },
+  "barWidget": {
+    "displayName": "LED Matrix",
+    "description": "Control Framework 16 LED Matrix panels",
+    "category": "Hardware",
+    "allowMultiple": false,
+    "defaultSection": "center"
+  }
+}
