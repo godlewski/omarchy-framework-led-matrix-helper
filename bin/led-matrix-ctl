@@ -68,6 +68,24 @@ pid_is_ours() {
   [[ -r "/proc/$1/cmdline" ]] && grep -q "led-matrix" "/proc/$1/cmdline" 2>/dev/null
 }
 
+# Physical USB port path (e.g. 3-2.1) — stable per input-deck slot across
+# reboots, unlike ttyACM numbering and the identical serial numbers.
+port_of() {
+  local sys
+  sys=$(readlink -f "/sys/class/tty/$(basename "$1")/device" 2>/dev/null) || return 0
+  basename "$sys" | cut -d: -f1
+}
+
+version_of() {
+  local dev="$1" out i
+  for i in 1 2 3; do
+    out=$(inputmodule-control --serial-dev "$dev" led-matrix -v 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1)
+    [[ -n "$out" ]] && { echo "$out"; return 0; }
+    sleep 0.3
+  done
+  echo "unknown"
+}
+
 STREAMERS_KILLED=0
 
 # A frame-streamer killed mid-write can leave the firmware's command parser
@@ -167,17 +185,20 @@ start_animation() {
   run_on_targets --brightness 80
 
   local pids=() dev
+  # Background animators must not inherit stdout/stderr — a caller reading
+  # (e.g. the shell plugin's Process) would block on pipe EOF forever,
+  # wedging every later action behind the still-open pipe.
   if [[ "$flag" == "bounce" ]]; then
     # The bounce loop fans out to all panels itself
-    "$BOUNCE_BIN" "${device_args[@]}" &
+    "$BOUNCE_BIN" "${device_args[@]}" >/dev/null 2>&1 &
     pids+=($!)
   elif [[ ${#device_args[@]} -gt 0 ]]; then
-    inputmodule-control "${device_args[@]}" led-matrix "$flag" 2>/dev/null &
+    inputmodule-control "${device_args[@]}" led-matrix "$flag" >/dev/null 2>&1 &
     pids+=($!)
   else
     # One host-side animator per panel
     while IFS= read -r dev; do
-      inputmodule-control --serial-dev "$dev" led-matrix "$flag" 2>/dev/null &
+      inputmodule-control --serial-dev "$dev" led-matrix "$flag" >/dev/null 2>&1 &
       pids+=("$!")
     done < <(devices)
   fi
@@ -213,12 +234,15 @@ case "$action" in
     local_msg="${1:-}"
     msg="${local_msg^^}"
     if [[ ${#device_args[@]} -gt 0 ]]; then
-      inputmodule-control "${device_args[@]}" led-matrix --string "${msg:0:5}" 2>/dev/null
+      printf -v chunk "%-5s" "${msg:0:5}"
+      inputmodule-control "${device_args[@]}" led-matrix --string "$chunk" >/dev/null 2>&1
     else
-      # Split across panels in effective order, 5 chars each
+      # Split across panels in effective order, 5 chars each; pad short chunks
+      # with spaces because --string "" leaves the previous text on the panel
       i=0
       while IFS= read -r dev; do
-        inputmodule-control --serial-dev "$dev" led-matrix --string "${msg:i*5:5}" 2>/dev/null &
+        printf -v chunk "%-5s" "${msg:i*5:5}"
+        inputmodule-control --serial-dev "$dev" led-matrix --string "$chunk" >/dev/null 2>&1 &
         i=$((i + 1))
       done < <(devices)
       wait
@@ -255,6 +279,55 @@ case "$action" in
     fi
     ;;
   stop-game) run_on_targets --stop-game ;;
+
+  device-info)
+    while IFS= read -r dev; do
+      echo "$dev|$(port_of "$dev")|$(version_of "$dev")"
+    done < <(devices)
+    ;;
+
+  identify)
+    # Blink brightness (grid content untouched) so the user can see which
+    # physical panel a device path maps to
+    [[ ${#device_args[@]} -gt 0 ]] || { echo "identify needs --device" >&2; exit 2; }
+    for _ in 1 2 3 4; do
+      inputmodule-control "${device_args[@]}" led-matrix --brightness 20 >/dev/null 2>&1
+      sleep 0.3
+      inputmodule-control "${device_args[@]}" led-matrix --brightness 100 >/dev/null 2>&1
+      sleep 0.3
+    done
+    ;;
+
+  latest-firmware)
+    cache="$STATE_DIR/latest-firmware"
+    mkdir -p "$STATE_DIR"
+    if [[ -f "$cache" ]] && (( $(date +%s) - $(stat -c %Y "$cache") < 3600 )); then
+      cat "$cache"
+      exit 0
+    fi
+    command -v curl >/dev/null 2>&1 || exit 1
+    json=$(curl -fsS --max-time 10 https://api.github.com/repos/FrameworkComputer/inputmodule-rs/releases/latest 2>/dev/null) || exit 1
+    tag=$(jq -r '.tag_name // empty' <<<"$json")
+    url=$(jq -r '[.assets[].browser_download_url | select(test("ledmatrix\\.uf2$"))][0] // empty' <<<"$json")
+    [[ -n "$tag" && -n "$url" ]] || exit 1
+    echo "$tag|$url" | tee "$cache"
+    ;;
+
+  download-firmware)
+    v="${1:?version required}"
+    fwdir="$HOME/.cache/godlewski.framework-led-matrix-helper"
+    mkdir -p "$fwdir"
+    f="$fwdir/ledmatrix-$v.uf2"
+    if [[ ! -f "$f" ]]; then
+      json=$(curl -fsS --max-time 10 "https://api.github.com/repos/FrameworkComputer/inputmodule-rs/releases/tags/$v" 2>/dev/null) || exit 1
+      url=$(jq -r '[.assets[].browser_download_url | select(test("ledmatrix\\.uf2$"))][0] // empty' <<<"$json")
+      [[ -n "$url" ]] || exit 1
+      curl -fsSL --max-time 60 -o "$f.tmp" "$url" 2>/dev/null || { rm -f "$f.tmp"; exit 1; }
+      [[ $(head -c3 "$f.tmp") == "UF2" ]] || { rm -f "$f.tmp"; echo "not a UF2 image" >&2; exit 1; }
+      mv "$f.tmp" "$f"
+    fi
+    echo "$f"
+    ;;
 
   *)
     echo "unknown action: $action" >&2

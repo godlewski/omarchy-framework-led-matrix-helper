@@ -94,7 +94,7 @@ fi
 while true; do
   for frame in "${frames[@]}"; do
     for dev in "${devices[@]}"; do
-      inputmodule-control --serial-dev "$dev" led-matrix --image-bw "$frame" 2>/dev/null &
+      inputmodule-control --serial-dev "$dev" led-matrix --image-bw "$frame" >/dev/null 2>&1 &
     done
     wait
     sleep 0.1

@@ -1,5 +1,6 @@
 var patterns = [
   { value: "logo", label: "Omarchy Logo" },
+  { value: "text", label: "Text" },
   { value: "gradient", label: "Gradient" },
   { value: "double-gradient", label: "Double Gradient" },
   { value: "lotus-sideways", label: "Lotus Sideways" },

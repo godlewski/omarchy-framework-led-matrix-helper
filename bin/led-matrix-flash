@@ -1,0 +1,76 @@
+#!/bin/bash
+
+# Flash ledmatrix firmware (.uf2) to a Framework 16 LED Matrix module.
+# RP2040 flow: --bootloader reboots the module into a USB mass-storage
+# bootloader (RPI-RP2), the uf2 is copied over, and the module self-flashes
+# and reboots. Progress is printed on stdout, one line per step, for the
+# shell plugin to stream into the UI.
+#
+# Usage: led-matrix-flash <device> <uf2-path>
+
+set -u
+
+DEV="${1:?device path required}"
+UF2="${2:?uf2 path required}"
+
+say() { echo "$*"; }
+
+[[ -c "$DEV" ]] || { say "error: no such device $DEV"; exit 1; }
+[[ -f "$UF2" ]] || { say "error: firmware file missing: $UF2"; exit 1; }
+[[ $(head -c3 "$UF2") == "UF2" ]] || { say "error: $UF2 is not a UF2 image"; exit 1; }
+
+# Remember the physical USB port so we can find the module after it
+# re-enumerates (the ttyACM number is not guaranteed to survive the reboot)
+port_of() {
+  local sys
+  sys=$(readlink -f "/sys/class/tty/$(basename "$1")/device" 2>/dev/null) || return 0
+  basename "$sys" | cut -d: -f1
+}
+PORT=$(port_of "$DEV")
+
+say "jumping to bootloader"
+inputmodule-control --serial-dev "$DEV" led-matrix --bootloader >/dev/null 2>&1 \
+  || { say "error: bootloader command failed"; exit 1; }
+
+say "waiting for bootloader drive"
+MOUNT=""
+for _ in $(seq 1 30); do
+  for d in /run/media/*/RPI-RP2 /media/*/RPI-RP2; do
+    [[ -d "$d" ]] && MOUNT="$d" && break
+  done
+  if [[ -z "$MOUNT" && -e /dev/disk/by-label/RPI-RP2 ]]; then
+    udisksctl mount -b /dev/disk/by-label/RPI-RP2 >/dev/null 2>&1 || true
+    MOUNT=$(lsblk -no MOUNTPOINT /dev/disk/by-label/RPI-RP2 2>/dev/null | head -1)
+  fi
+  [[ -n "$MOUNT" ]] && break
+  sleep 1
+done
+[[ -n "$MOUNT" ]] || { say "error: bootloader drive never appeared (looked for RPI-RP2)"; exit 1; }
+
+say "flashing $(basename "$UF2")"
+cp "$UF2" "$MOUNT/" || { say "error: copy to $MOUNT failed"; exit 1; }
+sync
+
+say "waiting for module to return"
+BACK=""
+for _ in $(seq 1 25); do
+  for cand in /dev/ttyACM*; do
+    [[ -e "$cand" ]] || continue
+    if [[ -n "$PORT" && "$(port_of "$cand")" == "$PORT" ]]; then
+      BACK="$cand"
+      break
+    fi
+  done
+  [[ -n "$BACK" ]] && break
+  sleep 1
+done
+[[ -n "$BACK" ]] || { say "error: module did not come back online"; exit 1; }
+
+sleep 2
+VER=""
+for _ in 1 2 3; do
+  VER=$(inputmodule-control --serial-dev "$BACK" led-matrix -v 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1)
+  [[ -n "$VER" ]] && break
+  sleep 0.5
+done
+say "done: $BACK now on firmware ${VER:-unknown}"
