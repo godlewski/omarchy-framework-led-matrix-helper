@@ -39,7 +39,7 @@ png_from_bits() {
 # Report missing dependencies, one per line (empty output = all present).
 # Must run before the inputmodule-control guard below.
 if [[ "${1:-}" == "deps" ]]; then
-  for dep in inputmodule-control python3 curl jq; do
+  for dep in inputmodule-control python3; do
     command -v "$dep" >/dev/null 2>&1 || echo "$dep"
   done
   exit 0
@@ -249,7 +249,8 @@ case "$action" in
   frame)
     stop_display_owners
     bits="${1:?306 frame bits required}"
-    [[ ${#bits} -eq 306 ]] || { echo "frame needs exactly 306 bits, got ${#bits}" >&2; exit 2; }
+    bits_re='^[01]{306}$'
+    [[ "$bits" =~ $bits_re ]] || { echo "frame needs exactly 306 bits of 0/1" >&2; exit 2; }
     mkdir -p "$STATE_DIR"
     frame_png="$STATE_DIR/frame.png"
     png_from_bits "$bits" "$frame_png" || exit 1
@@ -262,8 +263,10 @@ case "$action" in
   save-pattern)
     name="${1:?pattern name required}"
     bits="${2:?306 bits required}"
-    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9\ _-]{0,31}$ ]] || { echo "invalid name (letters, digits, space, - _; max 32)" >&2; exit 2; }
-    [[ ${#bits} -eq 306 ]] || { echo "pattern needs exactly 306 bits" >&2; exit 2; }
+    name_re='^[A-Za-z0-9][A-Za-z0-9 _-]{0,31}$'
+    [[ "$name" =~ $name_re ]] || { echo "invalid name (letters, digits, space, - _; max 32)" >&2; exit 2; }
+    bits_re='^[01]{306}$'
+    [[ "$bits" =~ $bits_re ]] || { echo "pattern needs exactly 306 bits of 0/1" >&2; exit 2; }
     mkdir -p "$PATTERNS_DIR"
     png_from_bits "$bits" "$PATTERNS_DIR/$name.png" || exit 1
     echo "$PATTERNS_DIR/$name.png"
@@ -283,7 +286,8 @@ case "$action" in
     [[ -f "$src_png" ]] || { echo "no such file: $src_png" >&2; exit 1; }
     command -v python3 >/dev/null 2>&1 || exit 1
     name="${2:-$(basename "$src_png" .png)}"
-    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9\ _-]{0,31}$ ]] || { echo "invalid name (letters, digits, space, - _; max 32)" >&2; exit 2; }
+    name_re='^[A-Za-z0-9][A-Za-z0-9 _-]{0,31}$'
+    [[ "$name" =~ $name_re ]] || { echo "invalid name (letters, digits, space, - _; max 32)" >&2; exit 2; }
     bits=$("$PNG_BIN" decode "$src_png") || exit 1
     mkdir -p "$PATTERNS_DIR"
     png_from_bits "$bits" "$PATTERNS_DIR/$name.png" || exit 1
@@ -367,36 +371,9 @@ case "$action" in
     done
     ;;
 
-  latest-firmware)
-    cache="$STATE_DIR/latest-firmware"
-    mkdir -p "$STATE_DIR"
-    if [[ -f "$cache" ]] && (( $(date +%s) - $(stat -c %Y "$cache") < 3600 )); then
-      cat "$cache"
-      exit 0
-    fi
-    command -v curl >/dev/null 2>&1 || exit 1
-    json=$(curl -fsS --max-time 10 https://api.github.com/repos/FrameworkComputer/inputmodule-rs/releases/latest 2>/dev/null) || exit 1
-    tag=$(jq -r '.tag_name // empty' <<<"$json")
-    url=$(jq -r '[.assets[].browser_download_url | select(test("ledmatrix\\.uf2$"))][0] // empty' <<<"$json")
-    [[ -n "$tag" && -n "$url" ]] || exit 1
-    echo "$tag|$url" | tee "$cache"
-    ;;
-
-  download-firmware)
-    v="${1:?version required}"
-    fwdir="$HOME/.cache/godlewski.framework-led-matrix-helper"
-    mkdir -p "$fwdir"
-    f="$fwdir/ledmatrix-$v.uf2"
-    if [[ ! -f "$f" ]]; then
-      json=$(curl -fsS --max-time 10 "https://api.github.com/repos/FrameworkComputer/inputmodule-rs/releases/tags/$v" 2>/dev/null) || exit 1
-      url=$(jq -r '[.assets[].browser_download_url | select(test("ledmatrix\\.uf2$"))][0] // empty' <<<"$json")
-      [[ -n "$url" ]] || exit 1
-      curl -fsSL --max-time 60 -o "$f.tmp" "$url" 2>/dev/null || { rm -f "$f.tmp"; exit 1; }
-      [[ $(head -c3 "$f.tmp") == "UF2" ]] || { rm -f "$f.tmp"; echo "not a UF2 image" >&2; exit 1; }
-      mv "$f.tmp" "$f"
-    fi
-    echo "$f"
-    ;;
+  # Firmware acquisition is deliberately NOT automated: the user downloads a
+  # .uf2 from Framework's official releases and picks the file in the UI;
+  # led-matrix-flash structurally validates it before flashing.
 
   *)
     echo "unknown action: $action" >&2

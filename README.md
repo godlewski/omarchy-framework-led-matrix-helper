@@ -50,10 +50,13 @@ firmware updates.
   RGB, palette, or alpha — drawn in any editor); dropping files into the
   patterns folder or `bin/led-matrix-ctl import-pattern <file> [name]` work
   as well.
-- **Firmware updates** — checks the latest
-  [inputmodule-rs](https://github.com/FrameworkComputer/inputmodule-rs)
-  release and flashes panels in place (RP2040 UF2 flow) with streamed
-  progress and a confirmation dialog.
+- **Firmware flashing** — download a `.uf2` from
+  [Framework's official releases](https://github.com/FrameworkComputer/inputmodule-rs/releases)
+  (a button opens the page), pick the file, and the plugin flashes it in
+  place (RP2040 UF2 flow) with streamed progress. The plugin never fetches
+  or chooses firmware itself, and every image is structurally validated
+  (UF2 block magics, RP2040 family ID) behind a confirmation dialog before
+  it can touch the bootloader.
 - **Stays lit** — the firmware normally fades panels out 60 seconds after the
   last command, so static patterns would vanish; the widget keeps what you
   applied visible with a lightweight keepalive (sleeping panels via the power
@@ -66,7 +69,7 @@ firmware updates.
 
 - Framework 16 with one or two LED Matrix input modules
 - [`inputmodule-control`](https://github.com/FrameworkComputer/inputmodule-rs)
-  (AUR), plus `python3`, `curl`, and `jq` (in the Omarchy base install)
+  (AUR), plus `python3` (in the Omarchy base install)
 
 **Missing something? The widget guides you.** When a dependency is absent the
 bar icon shows a setup state whose panel explains what's missing and offers

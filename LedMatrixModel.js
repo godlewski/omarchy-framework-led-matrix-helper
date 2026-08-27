@@ -138,13 +138,6 @@ function statusMeta(deviceCount, animation, awake) {
   return tooltip(deviceCount, animation)
 }
 
-// Firmware row subtitle: version plus how it relates to the latest release.
-function firmwareLine(version, latestTag) {
-  var line = "Firmware " + version
-  if (!latestTag || version === "unknown") return line
-  if ("v" + version === latestTag) return line + " · latest"
-  return line + " · update available: " + latestTag
-}
 
 // ---- panel emulation -------------------------------------------------------
 //

@@ -17,7 +17,44 @@ say() { echo "$*"; }
 
 [[ -c "$DEV" ]] || { say "error: no such device $DEV"; exit 1; }
 [[ -f "$UF2" ]] || { say "error: firmware file missing: $UF2"; exit 1; }
-[[ $(head -c3 "$UF2") == "UF2" ]] || { say "error: $UF2 is not a UF2 image"; exit 1; }
+
+# Full structural validation of the user-chosen image before anything touches
+# the module: every 512-byte UF2 block's three magics, consistent block
+# numbering, sane payload sizes, and the RP2040 family ID on every block.
+# The plugin deliberately does NOT download firmware — the user obtains it
+# from Framework's releases and picks the file — so this check is the gate
+# that keeps arbitrary files away from the bootloader.
+say "validating firmware image"
+if ! command -v python3 >/dev/null 2>&1; then
+  say "error: python3 required to validate firmware"
+  exit 1
+fi
+if ! err=$(python3 - "$UF2" <<'PYEOF' 2>&1
+import struct, sys
+data = open(sys.argv[1], "rb").read()
+if len(data) == 0 or len(data) % 512 != 0:
+    sys.exit("not a UF2 image (size not a multiple of 512)")
+if len(data) > 4 * 1024 * 1024:
+    sys.exit("too large for a ledmatrix image (>4MB)")
+RP2040_FAMILY = 0xE48BFF56
+n = len(data) // 512
+for i in range(n):
+    b = data[i * 512:(i + 1) * 512]
+    m0, m1, flags, addr, sz, blk, num, fam = struct.unpack_from("<8I", b, 0)
+    mend = struct.unpack_from("<I", b, 508)[0]
+    if m0 != 0x0A324655 or m1 != 0x9E5D5157 or mend != 0x0AB16F30:
+        sys.exit(f"block {i}: bad UF2 magic")
+    if blk != i or num != n:
+        sys.exit(f"block {i}: inconsistent block numbering")
+    if sz > 476:
+        sys.exit(f"block {i}: invalid payload size")
+    if not (flags & 0x2000) or fam != RP2040_FAMILY:
+        sys.exit(f"block {i}: not RP2040 firmware")
+PYEOF
+); then
+  say "error: $err"
+  exit 1
+fi
 
 # Remember the physical USB port so we can find the module after it
 # re-enumerates (the ttyACM number is not guaranteed to survive the reboot)

@@ -19,6 +19,12 @@ import zlib
 
 W, H = 9, 34
 
+# A legitimate 9x34 PNG is under 2KB; anything near this cap is not a
+# pattern. Applied before reading, so hostile files dropped into the pattern
+# library or fed to import cost nothing.
+MAX_FILE_BYTES = 256 * 1024
+MAX_CHUNKS = 1000
+
 
 def chunk(typ, data):
     x = typ + data
@@ -88,13 +94,21 @@ def unpack_bits(line, depth, count):
 
 
 def decode(path):
+    if os.path.getsize(path) > MAX_FILE_BYTES:
+        raise ValueError(f"file too large (max {MAX_FILE_BYTES // 1024}KB)")
     data = open(path, "rb").read()
     if data[:8] != b"\x89PNG\r\n\x1a\n":
         raise ValueError("not a PNG")
     pos, idat, plte, trns = 8, b"", b"", b""
     w = h = depth = ctype = interlace = None
+    chunks = 0
     while pos + 8 <= len(data):
+        chunks += 1
+        if chunks > MAX_CHUNKS:
+            raise ValueError("too many chunks")
         ln = struct.unpack(">I", data[pos:pos + 4])[0]
+        if ln > len(data) - pos - 12:
+            raise ValueError("truncated chunk")
         typ = data[pos + 4:pos + 8]
         body = data[pos + 8:pos + 8 + ln]
         if typ == b"IHDR":
@@ -123,7 +137,14 @@ def decode(path):
 
     stride = (w * channels * depth + 7) // 8
     bpp = max(1, channels * depth // 8)
-    raw = unfilter(zlib.decompress(idat), h, stride, bpp)
+    # Bounded decompression: a valid image inflates to exactly (stride+1)*h
+    # bytes (~1.3KB here). Capping at expected+1 means a decompression bomb
+    # overshoots by one byte and is rejected, without ever inflating further.
+    expected = (stride + 1) * h
+    raw = zlib.decompressobj().decompress(idat, expected + 1)
+    if len(raw) != expected:
+        raise ValueError("IDAT size mismatch")
+    raw = unfilter(raw, h, stride, bpp)
 
     scale = 255 // ((1 << depth) - 1) if depth < 8 else 1
     bits = ""

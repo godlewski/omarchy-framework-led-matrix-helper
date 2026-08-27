@@ -57,7 +57,9 @@ because inputmodule-control is an AUR package and omarchy-pkg-add is
 pacman-only.
   game <name> | stop-game
   device-info               dev|usb-port|fw-version   (ALWAYS unswapped order)
-  latest-firmware           tag|url (1h cache); download-firmware <tag>
+  (no firmware download actions — by design: the user downloads a .uf2 from
+  Framework's releases and picks it in the UI; led-matrix-flash validates
+  every 512-byte UF2 block and the RP2040 family ID before flashing)
   identify                  brightness pulse (needs --device)
 ```
 
@@ -120,13 +122,14 @@ that). Global sleep (hero switch) still uses real `sleep`/`wake`.
 
 The panels sit on the user's machine — tests are user-visible.
 
-- Read-only (always safe): `list`, `animation-status`, `device-info`,
-  `latest-firmware`.
+- Read-only (always safe): `list`, `animation-status`, `device-info`, `deps`.
 - Visible but harmless: `identify`, `brightness`, `pattern`; finish by
   restoring the prior state (check `animation-status` first; re-run its
   animation or re-apply the pattern afterwards, and end with
   `stop-animation` only if nothing was running before).
-- Never run `download-firmware`/flash paths as a "test"; mock with an echo
-  script if the chain logic needs exercising.
+- Never flash real hardware as a "test". led-matrix-flash's UF2 validation
+  CAN be tested safely: feeding it a bad file fails before any serial
+  contact ("error: …" and exit 1). For the full UI flow, mock the flash
+  script with an echo stub.
 - After killing anything mid-stream, expect garbled panels until a pattern
   write realigns the parser.

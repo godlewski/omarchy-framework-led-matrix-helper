@@ -39,7 +39,7 @@ Column {
       }
 
       Text {
-        text: Model.firmwareLine(deviceRow.modelData.version, widget.latestFirmware)
+        text: "Firmware " + deviceRow.modelData.version
         color: Qt.darker(widget.fg, 1.4)
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
@@ -83,14 +83,13 @@ Column {
         }
 
         Button {
-          text: widget.latestFirmware ? "Flash " + widget.latestFirmware : "Flash (offline)"
+          text: "Flash firmware…"
           bordered: true
           foreground: widget.fg
           hasCursor: widget.cursorActive && widget.cursorRow === "flash:" + deviceRow.index
-          enabled: widget.latestFirmware !== "" && !widget.flashing
+          enabled: !widget.flashing
           opacity: enabled ? 1.0 : 0.5
-          tooltipText: widget.latestFirmware === ""
-            ? "Latest version unknown — check network and reopen this tab" : ""
+          tooltipText: "Pick a .uf2 you downloaded from Framework's releases; it's validated before flashing"
           onClicked: widget.beginFlashConfirm(deviceRow.modelData.dev)
           onHovered: function(isHovered) { if (isHovered) widget.setCursor("flash:" + deviceRow.index) }
         }
@@ -124,12 +123,13 @@ Column {
     onClicked: widget.toggleSwap()
   }
 
-  Text {
-    text: widget.latestFirmware === ""
-      ? "Checking latest ledmatrix firmware…"
-      : "Latest ledmatrix firmware: " + widget.latestFirmware
-    color: Qt.darker(widget.fg, 1.5)
-    font.family: Style.font.family
-    font.pixelSize: Style.font.caption
+  Button {
+    text: "Get firmware from Framework's releases"
+    bordered: true
+    leftAlign: true
+    width: parent.width
+    foreground: widget.fg
+    tooltipText: "Opens github.com/FrameworkComputer/inputmodule-rs/releases — download ledmatrix.uf2, then Flash firmware…"
+    onClicked: widget.openFirmwareReleases()
   }
 }

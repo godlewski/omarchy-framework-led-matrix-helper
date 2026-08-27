@@ -44,9 +44,7 @@ BarWidget {
 
   readonly property var depPackages: ({
     "inputmodule-control": "inputmodule-control",
-    "python3": "python",
-    "curl": "curl",
-    "jq": "jq"
+    "python3": "python"
   })
 
   function installDeps() {
@@ -203,9 +201,12 @@ BarWidget {
   }
 
   property var deviceInfo: []
-  property string latestFirmware: ""
-  property string latestUrl: ""
   property var flashStatus: ({})
+  // Firmware flow is deliberately manual: the user downloads a .uf2 from
+  // Framework's official releases and picks the file; led-matrix-flash
+  // structurally validates it (UF2 magics, RP2040 family) before flashing.
+  // No auto-fetching — the plugin never selects firmware on its own.
+  property string flashFile: ""
   property string flashConfirmDev: ""
   property bool flashing: false
 
@@ -457,7 +458,10 @@ BarWidget {
 
   function refreshFirmwareTab() {
     if (!infoProc.running) infoProc.running = true
-    if (!latestProc.running) latestProc.running = true
+  }
+
+  function openFirmwareReleases() {
+    if (bar) bar.run("xdg-open https://github.com/FrameworkComputer/inputmodule-rs/releases")
   }
 
   function setActiveTab(tabId) {
@@ -517,19 +521,23 @@ BarWidget {
 
   // ---- flashing ------------------------------------------------------------
 
+  // Flash flow: pick a .uf2 with the desktop chooser, then confirm, then
+  // hand it to led-matrix-flash (which validates before touching hardware).
   function beginFlashConfirm(dev) {
-    if (flashing || latestFirmware === "") return
-    flashConfirmDev = dev
+    if (flashing || flashPickProc.running) return
+    flashPickProc.forDev = dev
+    flashPickProc.running = true
   }
 
   function startFlash(dev) {
     flashConfirmDev = ""
-    if (flashing || latestFirmware === "" || dev === "") return
+    if (flashing || flashFile === "" || dev === "") return
     flashing = true
-    setFlashStatus(dev, "Resolving download…")
-    downloadProc.deviceToFlash = dev
-    downloadProc.command = [ctlPath, "download-firmware", latestFirmware]
-    downloadProc.running = true
+    setFlashStatus(dev, "Validating " + flashFile.split("/").pop() + "…")
+    runAction(["stop-animation"])
+    flashProc.forDev = dev
+    flashProc.command = [ctlPath.replace(/led-matrix-ctl$/, "led-matrix-flash"), dev, flashFile]
+    flashProc.running = true
   }
 
   function setFlashStatus(dev, msg) {
@@ -884,57 +892,37 @@ BarWidget {
   }
 
   Process {
-    id: latestProc
-    command: root.ctlBase().concat(["latest-firmware"])
-    property string buf: ""
-    onStarted: buf = ""
-    stdout: SplitParser {
-      onRead: function(line) { latestProc.buf += String(line || "") }
-    }
-    onExited: function(exitCode) {
-      if (exitCode === 0) {
-        var parts = latestProc.buf.split("|")
-        if (parts.length === 2) {
-          root.latestFirmware = parts[0].trim()
-          root.latestUrl = parts[1].trim()
-        }
-      }
-    }
-  }
-
-  Process {
-    id: downloadProc
-    property string deviceToFlash: ""
-    property string uf2Path: ""
+    id: flashPickProc
+    command: ["omarchy-file-select", "--title", "Choose ledmatrix firmware (.uf2)", "--extensions", "uf2"]
+    property string forDev: ""
+    property string picked: ""
+    onStarted: picked = ""
     stdout: SplitParser {
       onRead: function(line) {
         var p = String(line || "").trim()
-        if (p.length > 0) downloadProc.uf2Path = p
+        if (p.length > 0) flashPickProc.picked = p
       }
     }
     onExited: function(exitCode) {
-      if (exitCode === 0 && uf2Path.length > 0) {
-        root.setFlashStatus(deviceToFlash, "Starting flash…")
-        root.runAction(["stop-animation"])
-        flashProc.command = [root.ctlPath.replace(/led-matrix-ctl$/, "led-matrix-flash"), deviceToFlash, uf2Path]
-        flashProc.running = true
-      } else {
-        root.setFlashStatus(deviceToFlash, "Download failed — check network")
-        root.flashing = false
+      if (exitCode === 0 && flashPickProc.picked.length > 0) {
+        root.flashFile = flashPickProc.picked
+        root.flashConfirmDev = flashPickProc.forDev
       }
     }
   }
 
   Process {
     id: flashProc
+    property string forDev: ""
     stdout: SplitParser {
       onRead: function(line) {
         var msg = String(line || "")
-        if (msg.length > 0) root.setFlashStatus(downloadProc.deviceToFlash, msg)
+        if (msg.length > 0) root.setFlashStatus(flashProc.forDev, msg)
       }
     }
     onExited: {
       root.flashing = false
+      root.flashFile = ""
       root.refreshFirmwareTab()
       root.refresh()
     }
@@ -1228,7 +1216,7 @@ BarWidget {
         anchors.fill: parent
         z: 10
         opened: root.flashConfirmDev !== ""
-        message: "Flash " + root.latestFirmware + " to the "
+        message: "Flash " + root.flashFile.split("/").pop() + " to the "
           + Model.deviceLabel(root.flashConfirmDev, root.devices, root.deviceInfo, root.leftPort, root.rightPort).toLowerCase()
           + "? It goes dark for a moment during the update."
         confirmText: "Flash"
