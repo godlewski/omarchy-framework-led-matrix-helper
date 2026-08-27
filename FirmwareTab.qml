@@ -83,7 +83,7 @@ Column {
         }
 
         Button {
-          text: "Flash firmware…"
+          text: "Flash…"
           bordered: true
           foreground: widget.fg
           hasCursor: widget.cursorActive && widget.cursorRow === "flash:" + deviceRow.index
