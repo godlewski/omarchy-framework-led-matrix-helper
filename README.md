@@ -123,6 +123,15 @@ State/caches you may also delete:
 Agent/contributor docs live in `CLAUDE.md`, with deeper references in
 `.claude/skills/` (shell UI kit, hardware/CLI semantics, dev loop).
 
+## Credits
+
+The panel emulation embeds the 5×6 pixel font, lotus bitmap, and pattern
+algorithms from Framework's
+[inputmodule-rs](https://github.com/FrameworkComputer/inputmodule-rs)
+(MIT © Framework Computer Inc), which also provides the `inputmodule-control`
+CLI and firmware this plugin drives. The bouncing-logo animation and logo
+bitmap are ported from [Omarchy](https://omarchy.org) (MIT).
+
 ## License
 
 [MIT](LICENSE)

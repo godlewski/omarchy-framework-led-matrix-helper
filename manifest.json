@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "godlewski.framework-led-matrix-helper",
   "name": "Framework LED Matrix Helper",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Steve Godlewski",
   "license": "MIT",
   "description": "Control center for Framework 16 LED Matrix panels: preview patterns, text, animations, and effects on a live emulation of both panels before applying them, draw your own patterns in a pixel-art editor with a shareable PNG library, and manage per-panel power and firmware updates",
