@@ -1,10 +1,11 @@
 {
   "schemaVersion": 1,
   "id": "godlewski.framework-led-matrix-helper",
-  "name": "LED Matrix",
-  "version": "1.1.0",
+  "name": "Framework LED Matrix Helper",
+  "version": "1.0.0",
   "author": "Steve Godlewski",
-  "description": "Control Framework 16 LED Matrix input modules from the bar",
+  "license": "MIT",
+  "description": "Control center for Framework 16 LED Matrix panels: preview patterns, text, animations, and effects on a live emulation of both panels before applying them, draw your own patterns in a pixel-art editor with a shareable PNG library, and manage per-panel power and firmware updates",
   "kinds": [
     "bar-widget"
   ],
@@ -12,8 +13,8 @@
     "barWidget": "LedMatrix.qml"
   },
   "barWidget": {
-    "displayName": "LED Matrix",
-    "description": "Control Framework 16 LED Matrix panels",
+    "displayName": "Framework LED Matrix Helper",
+    "description": "Preview and drive the LED Matrix panels: patterns, text, animations, pixel-art editor, firmware",
     "category": "Hardware",
     "allowMultiple": false,
     "defaultSection": "center"

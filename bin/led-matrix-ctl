@@ -26,7 +26,24 @@ PID_FILE="$STATE_DIR/animation.pid"
 TYPE_FILE="$STATE_DIR/animation.type"
 BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOUNCE_BIN="$BIN_DIR/led-matrix-bounce"
+PNG_BIN="$BIN_DIR/led-matrix-png"
 LOGO_IMG="$BIN_DIR/../assets/omarchy-logo-9x34.png"
+PATTERNS_DIR="$HOME/.local/share/godlewski.framework-led-matrix-helper/patterns"
+
+# Write a 9x34 grayscale PNG from 306 chars of 0/1 (row-major)
+png_from_bits() {
+  command -v python3 >/dev/null 2>&1 || { echo "python3 required" >&2; return 1; }
+  "$PNG_BIN" encode "$1" "$2"
+}
+
+# Report missing dependencies, one per line (empty output = all present).
+# Must run before the inputmodule-control guard below.
+if [[ "${1:-}" == "deps" ]]; then
+  for dep in inputmodule-control python3 curl jq; do
+    command -v "$dep" >/dev/null 2>&1 || echo "$dep"
+  done
+  exit 0
+fi
 
 if ! command -v inputmodule-control >/dev/null 2>&1; then
   exit 1
@@ -225,6 +242,58 @@ case "$action" in
     fi
     ;;
   percentage)  stop_display_owners; run_on_targets --percentage "${1:?percentage 0-100 required}" ;;
+
+  # Display an arbitrary 9x34 frame given as 306 chars of 0/1 (row-major,
+  # x left-to-right then y top-to-bottom). Used by the shell plugin for
+  # pixel-shifted text and custom drawings.
+  frame)
+    stop_display_owners
+    bits="${1:?306 frame bits required}"
+    [[ ${#bits} -eq 306 ]] || { echo "frame needs exactly 306 bits, got ${#bits}" >&2; exit 2; }
+    mkdir -p "$STATE_DIR"
+    frame_png="$STATE_DIR/frame.png"
+    png_from_bits "$bits" "$frame_png" || exit 1
+    run_on_targets --image-bw "$frame_png"
+    ;;
+
+  # ---- custom pattern library (9x34 PNGs — the same format --image-bw
+  # consumes, so saved patterns are directly shareable/usable) ----------------
+
+  save-pattern)
+    name="${1:?pattern name required}"
+    bits="${2:?306 bits required}"
+    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9\ _-]{0,31}$ ]] || { echo "invalid name (letters, digits, space, - _; max 32)" >&2; exit 2; }
+    [[ ${#bits} -eq 306 ]] || { echo "pattern needs exactly 306 bits" >&2; exit 2; }
+    mkdir -p "$PATTERNS_DIR"
+    png_from_bits "$bits" "$PATTERNS_DIR/$name.png" || exit 1
+    echo "$PATTERNS_DIR/$name.png"
+    ;;
+
+  # Prints one "name|bits" line per saved pattern
+  list-patterns)
+    [[ -d "$PATTERNS_DIR" ]] || exit 0
+    command -v python3 >/dev/null 2>&1 || exit 1
+    "$PNG_BIN" decode-dir "$PATTERNS_DIR" 2>/dev/null
+    ;;
+
+  # Import any 9x34 PNG (gray/RGB/palette/alpha, bit depths 1-8) into the
+  # pattern library, normalized to the canonical encoding.
+  import-pattern)
+    src_png="${1:?path to a 9x34 PNG required}"
+    [[ -f "$src_png" ]] || { echo "no such file: $src_png" >&2; exit 1; }
+    command -v python3 >/dev/null 2>&1 || exit 1
+    name="${2:-$(basename "$src_png" .png)}"
+    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9\ _-]{0,31}$ ]] || { echo "invalid name (letters, digits, space, - _; max 32)" >&2; exit 2; }
+    bits=$("$PNG_BIN" decode "$src_png") || exit 1
+    mkdir -p "$PATTERNS_DIR"
+    png_from_bits "$bits" "$PATTERNS_DIR/$name.png" || exit 1
+    echo "$PATTERNS_DIR/$name.png"
+    ;;
+
+  delete-pattern)
+    name="${1:?pattern name required}"
+    rm -f "$PATTERNS_DIR/$name.png"
+    ;;
   sleep)       stop_animation; run_on_targets --sleeping true ;;
   wake)        run_on_targets --sleeping false ;;
   off)         stop_animation; run_on_targets --brightness 0 ;;
