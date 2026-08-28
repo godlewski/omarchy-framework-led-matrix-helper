@@ -12,7 +12,9 @@
 # pixel is ON when its luminance > 50% and it is not mostly transparent.
 # Interlaced (Adam7) and 16-bit PNGs are rejected.
 
+import errno
 import os
+import stat
 import struct
 import sys
 import zlib
@@ -20,9 +22,40 @@ import zlib
 W, H = 9, 34
 
 # A legitimate 9x34 PNG is under 2KB; anything near this cap is not a
-# pattern. Applied before reading, so hostile files dropped into the pattern
-# library or fed to import cost nothing.
+# pattern. Enforced by read_bounded() on the open descriptor, so hostile
+# files dropped into the pattern library or fed to import cost nothing.
 MAX_FILE_BYTES = 256 * 1024
+
+
+def read_bounded(path, limit):
+    """Read a regular file of at most `limit` bytes.
+
+    Opens exactly once — without following symlinks, non-blocking — checks
+    the descriptor is a regular file, and reads at most limit+1 bytes from
+    that same descriptor. A FIFO, device node, oversized file, or a path
+    swapped between check and read therefore cannot block or exhaust memory.
+    """
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+                     | os.O_CLOEXEC | os.O_NOCTTY)
+    except OSError as e:
+        if e.errno == errno.ELOOP:
+            raise ValueError("symlinks are not followed; use the real file")
+        raise
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("not a regular file")
+        data = bytearray()
+        while len(data) <= limit:
+            chunk = os.read(fd, min(65536, limit + 1 - len(data)))
+            if not chunk:
+                break
+            data += chunk
+    finally:
+        os.close(fd)
+    if len(data) > limit:
+        raise ValueError(f"file too large (max {limit // 1024}KB)")
+    return bytes(data)
 MAX_CHUNKS = 1000
 
 
@@ -94,9 +127,7 @@ def unpack_bits(line, depth, count):
 
 
 def decode(path):
-    if os.path.getsize(path) > MAX_FILE_BYTES:
-        raise ValueError(f"file too large (max {MAX_FILE_BYTES // 1024}KB)")
-    data = open(path, "rb").read()
+    data = read_bounded(path, MAX_FILE_BYTES)
     if data[:8] != b"\x89PNG\r\n\x1a\n":
         raise ValueError("not a PNG")
     pos, idat, plte, trns = 8, b"", b"", b""

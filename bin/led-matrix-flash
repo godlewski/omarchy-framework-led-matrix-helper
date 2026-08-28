@@ -16,27 +16,74 @@ UF2="${2:?uf2 path required}"
 say() { echo "$*"; }
 
 [[ -c "$DEV" ]] || { say "error: no such device $DEV"; exit 1; }
-[[ -f "$UF2" ]] || { say "error: firmware file missing: $UF2"; exit 1; }
-
-# Full structural validation of the user-chosen image before anything touches
-# the module: every 512-byte UF2 block's three magics, consistent block
-# numbering, sane payload sizes, and the RP2040 family ID on every block.
+# Validation of the user-chosen image before anything touches the module.
 # The plugin deliberately does NOT download firmware — the user obtains it
-# from Framework's releases and picks the file — so this check is the gate
-# that keeps arbitrary files away from the bootloader.
+# from Framework's releases and picks the file — so this is the gate that
+# keeps arbitrary files away from the bootloader:
+#   * the file is opened exactly once, without following symlinks and
+#     non-blocking; the descriptor must be a regular file, and at most
+#     MAX+1 bytes are read from it — so FIFOs, device nodes, oversized
+#     files, and path swaps between check and read cannot block or exhaust
+#     memory;
+#   * every 512-byte UF2 block's three magics, consistent block numbering,
+#     sane payload sizes, and the RP2040 family ID on every block;
+#   * the SHA-256 of the image must match one of Framework's published
+#     ledmatrix release images (allowlist below) — structural validity alone
+#     would accept any RP2040 UF2, not just reviewed firmware;
+#   * the validated bytes are written to a private temp file, and THAT is
+#     what gets copied to the bootloader, so the flashed image is exactly
+#     the one that was validated.
 say "validating firmware image"
 if ! command -v python3 >/dev/null 2>&1; then
   say "error: python3 required to validate firmware"
   exit 1
 fi
-if ! err=$(python3 - "$UF2" <<'PYEOF' 2>&1
-import struct, sys
-data = open(sys.argv[1], "rb").read()
+VALIDATED=$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/ledmatrix-fw.XXXXXX") \
+  || { say "error: cannot create temp file"; exit 1; }
+trap 'rm -f "$VALIDATED"' EXIT
+if ! err=$(python3 - "$UF2" "$VALIDATED" <<'PYEOF' 2>&1
+import errno, hashlib, os, stat, struct, sys
+
+src, dst = sys.argv[1], sys.argv[2]
+MAX = 4 * 1024 * 1024
+RP2040_FAMILY = 0xE48BFF56
+
+# SHA-256 of Framework's ledmatrix firmware images, taken from the assets of
+# https://github.com/FrameworkComputer/inputmodule-rs/releases/tag/v0.2.0
+# (ledmatrix.uf2 standalone == ledmatrix.uf2 inside ledmatrix_fw_v0.2.0.zip;
+# the zip also ships the EVT and 10k hardware variants). Framework publishes
+# no checksums or signatures, so these were computed from the downloaded
+# assets. Extend this list when Framework publishes a new stable release.
+ALLOWED = {
+    "4077167c4fe86de0a0d7d0c27a3e2209e501840842c32c21de464be32b5a9ef4": "ledmatrix.uf2 (v0.2.0)",
+    "296650ea0d73ca12b3b4e8f3b8325a70fee4cc0dcf255eae35a208e32578defa": "ledmatrix_evt.uf2 (v0.2.0)",
+    "340c0ee42e1c113c834157ca06cb163643f5984179bd34c4f5494b791df87fe6": "ledmatrix_10k.uf2 (v0.2.0)",
+}
+
+try:
+    fd = os.open(src, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+                 | os.O_CLOEXEC | os.O_NOCTTY)
+except OSError as e:
+    if e.errno == errno.ELOOP:
+        sys.exit("firmware path is a symlink; pick the real file")
+    sys.exit(f"cannot open firmware file: {e.strerror}")
+try:
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        sys.exit("firmware path is not a regular file")
+    data = bytearray()
+    while len(data) <= MAX:
+        chunk = os.read(fd, min(65536, MAX + 1 - len(data)))
+        if not chunk:
+            break
+        data += chunk
+finally:
+    os.close(fd)
+data = bytes(data)
+
+if len(data) > MAX:
+    sys.exit("too large for a ledmatrix image (>4MB)")
 if len(data) == 0 or len(data) % 512 != 0:
     sys.exit("not a UF2 image (size not a multiple of 512)")
-if len(data) > 4 * 1024 * 1024:
-    sys.exit("too large for a ledmatrix image (>4MB)")
-RP2040_FAMILY = 0xE48BFF56
 n = len(data) // 512
 for i in range(n):
     b = data[i * 512:(i + 1) * 512]
@@ -50,11 +97,25 @@ for i in range(n):
         sys.exit(f"block {i}: invalid payload size")
     if not (flags & 0x2000) or fam != RP2040_FAMILY:
         sys.exit(f"block {i}: not RP2040 firmware")
+
+digest = hashlib.sha256(data).hexdigest()
+if digest not in ALLOWED:
+    sys.exit("not a known Framework ledmatrix release image (sha256 "
+             f"{digest[:12]}…); only images from Framework's official v0.2.0 "
+             "release are flashed here — for custom builds copy the .uf2 to "
+             "the RPI-RP2 drive yourself")
+
+with open(dst, "wb") as f:
+    f.write(data)
+    f.flush()
+    os.fsync(f.fileno())
+print(ALLOWED[digest])
 PYEOF
 ); then
   say "error: $err"
   exit 1
 fi
+say "verified $err"
 
 # Remember the physical USB port so we can find the module after it
 # re-enumerates (the ttyACM number is not guaranteed to survive the reboot)
@@ -85,7 +146,7 @@ done
 [[ -n "$MOUNT" ]] || { say "error: bootloader drive never appeared (looked for RPI-RP2)"; exit 1; }
 
 say "flashing $(basename "$UF2")"
-cp "$UF2" "$MOUNT/" || { say "error: copy to $MOUNT failed"; exit 1; }
+cp "$VALIDATED" "$MOUNT/ledmatrix.uf2" || { say "error: copy to $MOUNT failed"; exit 1; }
 sync
 
 say "waiting for module to return"

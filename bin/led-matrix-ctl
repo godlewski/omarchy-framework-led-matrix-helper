@@ -373,7 +373,9 @@ case "$action" in
 
   # Firmware acquisition is deliberately NOT automated: the user downloads a
   # .uf2 from Framework's official releases and picks the file in the UI;
-  # led-matrix-flash structurally validates it before flashing.
+  # led-matrix-flash validates it (bounded read of a regular file, UF2
+  # structure, SHA-256 allowlist of Framework's release images) before
+  # flashing.
 
   *)
     echo "unknown action: $action" >&2

@@ -89,7 +89,7 @@ Column {
           hasCursor: widget.cursorActive && widget.cursorRow === "flash:" + deviceRow.index
           enabled: !widget.flashing
           opacity: enabled ? 1.0 : 0.5
-          tooltipText: "Pick a .uf2 you downloaded from Framework's releases; it's validated before flashing"
+          tooltipText: "Pick a ledmatrix .uf2 from Framework's v0.2.0 release; it's checked against Framework's release digests before flashing"
           onClicked: widget.beginFlashConfirm(deviceRow.modelData.dev)
           onHovered: function(isHovered) { if (isHovered) widget.setCursor("flash:" + deviceRow.index) }
         }

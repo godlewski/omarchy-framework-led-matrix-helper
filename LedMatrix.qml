@@ -204,7 +204,8 @@ BarWidget {
   property var flashStatus: ({})
   // Firmware flow is deliberately manual: the user downloads a .uf2 from
   // Framework's official releases and picks the file; led-matrix-flash
-  // structurally validates it (UF2 magics, RP2040 family) before flashing.
+  // validates it (bounded regular-file read, UF2 magics, RP2040 family,
+  // SHA-256 allowlist of Framework's v0.2.0 release images) before flashing.
   // No auto-fetching — the plugin never selects firmware on its own.
   property string flashFile: ""
   property string flashConfirmDev: ""

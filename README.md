@@ -54,9 +54,13 @@ firmware updates.
   [Framework's official releases](https://github.com/FrameworkComputer/inputmodule-rs/releases)
   (a button opens the page), pick the file, and the plugin flashes it in
   place (RP2040 UF2 flow) with streamed progress. The plugin never fetches
-  or chooses firmware itself, and every image is structurally validated
-  (UF2 block magics, RP2040 family ID) behind a confirmation dialog before
-  it can touch the bootloader.
+  or chooses firmware itself. Before anything touches the bootloader the
+  image is read once from a regular file (bounded, no symlinks/FIFOs),
+  structurally validated (UF2 block magics, RP2040 family ID), and its
+  SHA-256 checked against Framework's published v0.2.0 `ledmatrix` images
+  (standard, EVT, 10k) — a crafted RP2040 image with the right headers is
+  still refused. Custom-built firmware is out of scope for the plugin; copy
+  it to the `RPI-RP2` drive yourself.
 - **Stays lit** — the firmware normally fades panels out 60 seconds after the
   last command, so static patterns would vanish; the widget keeps what you
   applied visible with a lightweight keepalive (sleeping panels via the power
