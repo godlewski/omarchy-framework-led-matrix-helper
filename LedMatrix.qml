@@ -510,10 +510,15 @@ BarWidget {
   function deriveSwap() {
     if (deviceInfo.length < 2) return
     if (!leftPort) return
-    // Unconditional write: comparing against the swapped binding races the
-    // hot-reload of that very value. Identical writes produce no file change,
-    // so this converges immediately instead of oscillating.
-    barSet("swapped", deviceInfo[0].port !== leftPort ? "true" : "false")
+    // Only write on an actual change: every `omarchy bar set` re-emits
+    // settingsChanged (even for an identical value), and settingsProc.onExited
+    // re-derives too, so an unconditional write here loops forever. A stale
+    // read just costs one extra write before converging.
+    var want = deviceInfo[0].port !== leftPort
+    if (want === swapped) return
+    for (var i = 0; i < pendingSettings.length; i++)
+      if (pendingSettings[i][0] === "swapped") return
+    barSet("swapped", want ? "true" : "false")
   }
 
   function toggleSwap() {
